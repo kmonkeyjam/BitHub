@@ -33,6 +33,10 @@ public class Issue {
   @NotEmpty
   private String html_url;
 
+  @JsonProperty
+  @NotEmpty
+  private PullRequest pull_request;
+
   public String getId() {
     return id;
   }
@@ -55,5 +59,9 @@ public class Issue {
 
   public String getHtml_url() {
     return html_url;
+  }
+
+  public PullRequest getPull_request() {
+    return pull_request;
   }
 }

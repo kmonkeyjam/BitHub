@@ -41,6 +41,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Handles interaction with the GitHub API.
@@ -129,13 +130,21 @@ public class GithubClient {
 
     while (resource != null) {
       WebResource.Builder authorized = appendAuthorization(resource);
-      LinkHeaders headers = new LinkHeaders(authorized.head().getHeaders().get("Link").get(0));
-      path = headers.getLink("next");
-      resource = path != null ? client.resource(path) : null;
-      results.addAll(authorized.get(new GenericType<List<Issue>>() {
-      }));
+      results.addAll(authorized.get(new GenericType<List<Issue>>() {}));
+      List<String> linkHeader = authorized.head().getHeaders().get("Link");
+      if (linkHeader != null) {
+        LinkHeaders headers = new LinkHeaders(linkHeader.get(0));
+        if (headers.getLink("next") != null) {
+          resource = client.resource(headers.getLink("next"));
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
     }
-    return results;
+
+    return results.stream().filter(r -> r.getPull_request() == null).collect(Collectors.toList());
   }
 
   private WebResource.Builder appendAuthorization(WebResource resource) {
