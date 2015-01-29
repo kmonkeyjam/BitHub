@@ -17,12 +17,17 @@
 
 package org.whispersystems.bithub;
 
+import io.dropwizard.db.DataSourceFactory;
+import io.dropwizard.jdbi.DBIFactory;
+import io.dropwizard.migrations.MigrationsBundle;
 import org.eclipse.jetty.servlets.CrossOriginFilter;
+import org.skife.jdbi.v2.DBI;
 import org.whispersystems.bithub.auth.GithubWebhookAuthenticator;
 import org.whispersystems.bithub.client.CoinbaseClient;
 import org.whispersystems.bithub.client.GithubClient;
 import org.whispersystems.bithub.config.CoinbaseConfiguration;
 import org.whispersystems.bithub.config.RepositoryConfiguration;
+import org.whispersystems.bithub.controllers.BountiesController;
 import org.whispersystems.bithub.controllers.DashboardController;
 import org.whispersystems.bithub.controllers.GithubController;
 import org.whispersystems.bithub.controllers.StatusController;
@@ -51,6 +56,12 @@ public class BithubService extends Application<BithubServerConfiguration> {
   @Override
   public void initialize(Bootstrap<BithubServerConfiguration> bootstrap) {
     bootstrap.addBundle(new ViewBundle());
+    bootstrap.addBundle(new MigrationsBundle<BithubServerConfiguration>() {
+      @Override
+      public DataSourceFactory getDataSourceFactory(BithubServerConfiguration configuration) {
+        return configuration.getDataSourceFactory();
+      }
+    });
   }
 
   @Override
@@ -66,7 +77,11 @@ public class BithubService extends Application<BithubServerConfiguration> {
     String                        organizationName   = config.getOrganizationConfiguration().getName();
     String                        donationUrl        = config.getOrganizationConfiguration().getDonationUrl().toExternalForm();
 
-    GithubClient   githubClient   = new GithubClient(githubUser, githubToken);
+    DBIFactory factory = new DBIFactory();
+    DBI jdbi = factory.build(environment, config.getDataSourceFactory(), "postgresql");
+    BithubDAO dao = jdbi.onDemand(BithubDAO.class);
+
+    GithubClient   githubClient   = new GithubClient(githubUser, githubToken, dao);
     CoinbaseConfiguration coinbaseConfig = config.getCoinbaseConfiguration();
     CoinbaseClient coinbaseClient = new CoinbaseClient(coinbaseConfig.getApiKey(), coinbaseConfig.getApiSecret());
     CacheManager   cacheManager   = new CacheManager(coinbaseClient, githubClient, githubRepositories, payoutRate);
@@ -79,6 +94,7 @@ public class BithubService extends Application<BithubServerConfiguration> {
     environment.jersey().register(new GithubController(githubRepositories, githubClient, coinbaseClient, payoutRate));
     environment.jersey().register(new StatusController(cacheManager, githubRepositories));
     environment.jersey().register(new DashboardController(organizationName, donationUrl, cacheManager));
+    environment.jersey().register(new BountiesController(cacheManager));
 
     environment.jersey().register(new IOExceptionMapper());
     environment.jersey().register(new UnauthorizedHookExceptionMapper());
