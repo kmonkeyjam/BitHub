@@ -17,17 +17,10 @@
 
 package org.whispersystems.bithub.views;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.whispersystems.bithub.entities.CoinbaseTransaction;
+import io.dropwizard.views.View;
 import org.whispersystems.bithub.entities.Transaction;
 
-import java.math.BigDecimal;
-import java.text.ParseException;
-import java.util.LinkedList;
 import java.util.List;
-
-import io.dropwizard.views.View;
 
 /**
  * A rendered HTML view of recent BitHub transactions.

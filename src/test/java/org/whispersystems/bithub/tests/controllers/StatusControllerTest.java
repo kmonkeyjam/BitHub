@@ -1,23 +1,24 @@
 package org.whispersystems.bithub.tests.controllers;
 
+import com.coinbase.api.ObjectMapperProvider;
+import com.coinbase.api.entity.TransactionsResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.jersey.api.client.ClientResponse;
+import io.dropwizard.testing.junit.ResourceTestRule;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.whispersystems.bithub.client.CoinbaseClient;
 import org.whispersystems.bithub.client.GithubClient;
+import org.whispersystems.bithub.client.TransferFailedException;
 import org.whispersystems.bithub.config.RepositoryConfiguration;
 import org.whispersystems.bithub.controllers.StatusController;
-import org.whispersystems.bithub.entities.CoinbseRecentTransactionsResponse;
-import org.whispersystems.bithub.entities.Repository;
 import org.whispersystems.bithub.storage.CacheManager;
 
 import javax.ws.rs.core.MediaType;
 import java.math.BigDecimal;
 import java.util.LinkedList;
 
-import io.dropwizard.testing.junit.ResourceTestRule;
 import static org.fest.assertions.api.Assertions.assertThat;
-import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.whispersystems.bithub.tests.util.JsonHelper.fromJson;
@@ -37,19 +38,21 @@ public class StatusControllerTest {
 
   static {
     try {
-      when(coinbaseClient.getRecentTransactions()).thenReturn(fromJson(jsonFixture("payloads/transactions.json"), CoinbseRecentTransactionsResponse.class).getTransactions());
+      ObjectMapper objectMapper = ObjectMapperProvider.createDefaultMapper();
+      TransactionsResponse transactionsResponse = objectMapper.readValue(StatusControllerTest.class.getResourceAsStream("/payloads/transactions.json"), TransactionsResponse.class);
+      when(coinbaseClient.getRecentTransactions()).thenReturn(transactionsResponse.getTransactions());
       when(coinbaseClient.getAccountBalance()).thenReturn(BALANCE);
       when(coinbaseClient.getExchangeRate()).thenReturn(EXCHANGE_RATE);
 
       CacheManager coinbaseManager = new CacheManager(coinbaseClient, githubClient,
-                                                      new LinkedList<RepositoryConfiguration>(),
+                                                      new LinkedList<>(),
                                                       PAYOUT_RATE);
       coinbaseManager.start();
 
       resources = ResourceTestRule.builder()
                                   .addResource(new StatusController(coinbaseManager, null))
                                   .build();
-    } catch (Exception e) {
+    } catch (Exception | TransferFailedException e) {
       throw new AssertionError(e);
     }
   }

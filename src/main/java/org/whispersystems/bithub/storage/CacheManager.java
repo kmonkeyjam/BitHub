@@ -1,11 +1,13 @@
 package org.whispersystems.bithub.storage;
 
+import io.dropwizard.lifecycle.Managed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.whispersystems.bithub.client.CoinbaseClient;
 import org.whispersystems.bithub.client.GithubClient;
+import org.whispersystems.bithub.client.TransferFailedException;
 import org.whispersystems.bithub.config.RepositoryConfiguration;
-import org.whispersystems.bithub.entities.CoinbaseTransaction;
+import org.whispersystems.bithub.entities.Issue;
 import org.whispersystems.bithub.entities.Payment;
 import org.whispersystems.bithub.entities.Repository;
 import org.whispersystems.bithub.entities.Transaction;
@@ -15,14 +17,14 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.ParseException;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-
-import io.dropwizard.lifecycle.Managed;
 
 public class CacheManager implements Managed {
 
@@ -39,6 +41,7 @@ public class CacheManager implements Managed {
   private AtomicReference<CurrentPayment>    cachedPaymentStatus;
   private AtomicReference<List<Transaction>> cachedTransactions;
   private AtomicReference<List<Repository>>  cachedRepositories;
+  private AtomicReference<Map<String, List<Issue>>> cachedIssues;
 
   public CacheManager(CoinbaseClient coinbaseClient,
                       GithubClient githubClient,
@@ -53,9 +56,15 @@ public class CacheManager implements Managed {
 
   @Override
   public void start() throws Exception {
-    this.cachedPaymentStatus = new AtomicReference<>(createCurrentPaymentForBalance(coinbaseClient));
-    this.cachedTransactions  = new AtomicReference<>(createRecentTransactions(coinbaseClient));
-    this.cachedRepositories  = new AtomicReference<>(createRepositories(githubClient, repositories));
+    try {
+      this.cachedPaymentStatus = new AtomicReference<>(createCurrentPaymentForBalance(coinbaseClient));
+      this.cachedTransactions  = new AtomicReference<>(createRecentTransactions(coinbaseClient));
+      List<Repository> currentRepositories = createRepositories(githubClient, repositories);
+      this.cachedRepositories  = new AtomicReference<>(currentRepositories);
+      this.cachedIssues = new AtomicReference<>(createIssues(githubClient, currentRepositories));
+    } catch (TransferFailedException e) {
+      throw new RuntimeException("Failed to initialize the CacheManager");
+    }
 
     initializeUpdates(coinbaseClient, githubClient, repositories);
   }
@@ -77,6 +86,10 @@ public class CacheManager implements Managed {
     return cachedRepositories.get();
   }
 
+  public Map<String, List<Issue>> getIssues() {
+    return cachedIssues.get();
+  }
+
   public void initializeUpdates(final CoinbaseClient coinbaseClient,
                                 final GithubClient githubClient,
                                 final List<RepositoryConfiguration> repoConfigs)
@@ -88,12 +101,13 @@ public class CacheManager implements Managed {
           CurrentPayment    currentPayment = createCurrentPaymentForBalance(coinbaseClient);
           List<Transaction> transactions   = createRecentTransactions      (coinbaseClient);
           List<Repository>  repositories   = createRepositories(githubClient, repoConfigs);
+          Map<String, List<Issue>> issues  = createIssues(githubClient, repositories);
 
           cachedPaymentStatus.set(currentPayment);
           cachedTransactions.set(transactions);
           cachedRepositories.set(repositories);
-
-        } catch (IOException e) {
+          cachedIssues.set(issues);
+        } catch (IOException | TransferFailedException e) {
           logger.warn("Failed to update badge", e);
         }
       }
@@ -112,9 +126,20 @@ public class CacheManager implements Managed {
     return repositoryList;
   }
 
+  private Map<String, List<Issue>> createIssues(GithubClient githubClient,
+                                                List<Repository> repos) {
+    Map<String, List<Issue>> issues = new HashMap<>();
+
+    for (Repository repository : repos) {
+      String url = repository.getUrl();
+      issues.put(url, githubClient.getOpenIssues(repository.getFull_name()));
+    }
+
+    return issues;
+  }
+
   private CurrentPayment createCurrentPaymentForBalance(CoinbaseClient coinbaseClient)
-      throws IOException
-  {
+          throws IOException, TransferFailedException {
     BigDecimal currentBalance = coinbaseClient.getAccountBalance();
     BigDecimal paymentBtc     = currentBalance.multiply(payoutRate);
     BigDecimal exchangeRate   = coinbaseClient.getExchangeRate();
@@ -126,16 +151,20 @@ public class CacheManager implements Managed {
                               new Payment(paymentUsd.toPlainString()));
   }
 
+  private boolean isSentTransaction(com.coinbase.api.entity.Transaction coinbaseTransaction) {
+    BigDecimal amount = coinbaseTransaction.getAmount().getAmount();
+    return amount.compareTo(new BigDecimal(0.0)) < 0;
+  }
+
   private List<Transaction> createRecentTransactions(CoinbaseClient coinbaseClient)
-      throws IOException
-  {
-    List<CoinbaseTransaction> recentTransactions = coinbaseClient.getRecentTransactions();
+          throws IOException, TransferFailedException {
+    List<com.coinbase.api.entity.Transaction> recentTransactions = coinbaseClient.getRecentTransactions();
     BigDecimal                exchangeRate       = coinbaseClient.getExchangeRate();
     List<Transaction>         transactions       = new LinkedList<>();
 
-    for (CoinbaseTransaction coinbaseTransaction : recentTransactions) {
+    for (com.coinbase.api.entity.Transaction coinbaseTransaction : recentTransactions) {
       try {
-        if (coinbaseTransaction.isSentTransaction()) {
+        if (isSentTransaction(coinbaseTransaction)) {
           CoinbaseTransactionParser parser      = new CoinbaseTransactionParser(coinbaseTransaction);
           String                    url         = parser.parseUrlFromMessage();
           String                    sha         = parser.parseShaFromUrl(url);

@@ -17,6 +17,11 @@
 
 package org.whispersystems.bithub.client;
 
+import com.coinbase.api.Coinbase;
+import com.coinbase.api.CoinbaseBuilder;
+import com.coinbase.api.entity.Account;
+import com.coinbase.api.entity.Transaction;
+import com.coinbase.api.exception.CoinbaseException;
 import com.sun.jersey.api.client.Client;
 import com.sun.jersey.api.client.ClientHandlerException;
 import com.sun.jersey.api.client.UniformInterfaceException;
@@ -24,18 +29,18 @@ import com.sun.jersey.api.client.WebResource;
 import com.sun.jersey.api.client.config.ClientConfig;
 import com.sun.jersey.api.client.config.DefaultClientConfig;
 import com.sun.jersey.api.json.JSONConfiguration;
-
+import org.apache.commons.codec.binary.Hex;
+import org.codehaus.jackson.map.ObjectMapper;
+import org.joda.money.Money;
 import org.whispersystems.bithub.entities.Author;
-import org.whispersystems.bithub.entities.BalanceResponse;
-import org.whispersystems.bithub.entities.BitcoinTransaction;
-import org.whispersystems.bithub.entities.BitcoinTransactionResponse;
-import org.whispersystems.bithub.entities.ExchangeRate;
-import org.whispersystems.bithub.entities.CoinbseRecentTransactionsResponse;
-import org.whispersystems.bithub.entities.CoinbaseTransaction;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import javax.ws.rs.core.MediaType;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 
 /**
@@ -44,93 +49,93 @@ import java.util.List;
  * @author Moxie Marlinspike
  */
 public class CoinbaseClient {
-
-  private static final String COINBASE_URL             = "https://coinbase.com/";
+  private static final String COINBASE_URL             = "https://coinbase.com";
   private static final String BALANCE_PATH             = "/api/v1/account/balance";
   private static final String PAYMENT_PATH             = "/api/v1/transactions/send_money";
-  private static final String EXCHANGE_PATH            = "/api/v1/currencies/exchange_rates";
   private static final String RECENT_TRANSACTIONS_PATH = "/api/v1/transactions";
 
   private final String apiKey;
+  private final String apiSecret;
   private final Client client;
+  private final Coinbase coinbase;
+  private final String primaryAccountId;
 
-  public CoinbaseClient(String apiKey) {
+  private static final ObjectMapper objectMapper = new ObjectMapper();
+
+  public CoinbaseClient(String apiKey, String apiSecret) {
     this.apiKey = apiKey;
+    this.apiSecret = apiSecret;
     this.client = Client.create(getClientConfig());
-  }
-
-  public List<CoinbaseTransaction> getRecentTransactions() throws IOException {
+    coinbase = new CoinbaseBuilder().withApiKey(apiKey, apiSecret).build();
     try {
-      return client.resource(COINBASE_URL)
-                   .path(RECENT_TRANSACTIONS_PATH)
-                   .queryParam("api_key", apiKey)
-                   .get(CoinbseRecentTransactionsResponse.class).getTransactions();
-    } catch (UniformInterfaceException | ClientHandlerException e) {
-      throw new IOException(e);
+      Account accounts = coinbase.getAccounts().getAccounts().stream().filter(Account::isPrimary).findFirst().get();
+      primaryAccountId = accounts.getId();
+    } catch (IOException | CoinbaseException e) {
+      throw new IllegalStateException("Coinbase account must have a primary wallet specified");
     }
   }
 
-  public BigDecimal getExchangeRate() throws IOException {
+  public List<Transaction> getRecentTransactions() throws IOException, TransferFailedException {
     try {
-      WebResource resource = client.resource(COINBASE_URL)
-                                   .path(EXCHANGE_PATH);
-
-      String btcToUsd = resource.accept(MediaType.APPLICATION_JSON)
-                                .get(ExchangeRate.class)
-                                .getBtc_to_usd();
-
-      return new BigDecimal(btcToUsd);
-  } catch (UniformInterfaceException | ClientHandlerException e) {
-    throw new IOException(e);
+      return coinbase.getTransactions().getTransactions();
+    } catch (CoinbaseException e) {
+      throw new TransferFailedException();
+    }
   }
-}
+
+  public BigDecimal getExchangeRate() throws IOException, TransferFailedException {
+    try {
+      return coinbase.getExchangeRates().get("btc_to_usd");
+    } catch (CoinbaseException e) {
+      throw new TransferFailedException();
+    }
+  }
 
   public void sendPayment(Author author, BigDecimal amount, String url)
-      throws TransferFailedException
-  {
+      throws TransferFailedException {
     try {
-      WebResource resource = client.resource(COINBASE_URL)
-                                   .path(PAYMENT_PATH)
-                                   .queryParam("api_key", apiKey);
-
       String note = "Commit payment:\n__" + author.getUsername() + "__ " + url;
 
-      BitcoinTransaction transaction = new BitcoinTransaction(author.getEmail(),
-                                                              amount.toPlainString(),
-                                                              note);
+      Transaction transaction = new Transaction();
+      transaction.setTo(author.getEmail());
+      transaction.setAmount(Money.parse("BTC " + amount.toPlainString()));
+      transaction.setNotes(note);
+      Transaction response = coinbase.sendMoney(transaction);
 
-      boolean success = resource.type(MediaType.APPLICATION_JSON_TYPE)
-                                .accept(MediaType.APPLICATION_JSON)
-                                .entity(transaction)
-                                .post(BitcoinTransactionResponse.class)
-                                .isSuccess();
-
-      if (!success) {
+      if (response.getStatus() != Transaction.Status.COMPLETE) {
         throw new TransferFailedException();
       }
 
-    } catch (UniformInterfaceException | ClientHandlerException e) {
-      throw new TransferFailedException(e);
+    } catch (UniformInterfaceException | ClientHandlerException | IOException | CoinbaseException e) {
+      throw new TransferFailedException();
     }
   }
 
-  public BigDecimal getAccountBalance() throws IOException {
+  public BigDecimal getAccountBalance() throws IOException, TransferFailedException {
     try {
-      WebResource resource = client.resource(COINBASE_URL)
-                                   .path(BALANCE_PATH)
-                                   .queryParam("api_key", apiKey);
-
-      String amount = resource.accept(MediaType.APPLICATION_JSON)
-                              .get(BalanceResponse.class)
-                              .getAmount();
-
-      if (amount == null) {
-        throw new IOException("Empty amount in response!");
-      }
-
-      return new BigDecimal(amount);
-    } catch (UniformInterfaceException | ClientHandlerException e) {
+      return coinbase.getBalance(primaryAccountId).getAmount();
+    } catch (CoinbaseException e) {
       throw new IOException(e);
+    }
+  }
+
+  private WebResource.Builder getAuthenticatedWebResource(String path, Object body) throws TransferFailedException {
+    try {
+      String json = body == null ? "" : objectMapper.writeValueAsString(body);
+      String nonce = String.valueOf(System.currentTimeMillis());
+      String message = nonce + COINBASE_URL + path + json;
+      Mac mac = Mac.getInstance("HmacSHA256");
+      mac.init(new SecretKeySpec(apiSecret.getBytes(), "HmacSHA256"));
+
+      String signature = new String(Hex.encodeHex(mac.doFinal(message.getBytes())));
+      return client.resource(COINBASE_URL)
+              .path(path)
+              .accept(MediaType.APPLICATION_JSON)
+              .header("ACCESS_SIGNATURE", signature)
+              .header("ACCESS_NONCE", nonce)
+              .header("ACCESS_KEY", apiKey);
+    } catch (NoSuchAlgorithmException | InvalidKeyException | IOException e) {
+      throw new TransferFailedException();
     }
   }
 

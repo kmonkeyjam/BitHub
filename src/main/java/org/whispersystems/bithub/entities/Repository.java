@@ -39,6 +39,10 @@ public class Repository {
   private String name;
 
   @JsonProperty
+  @NotEmpty
+  private String full_name;
+
+  @JsonProperty
   private String description;
 
   public Repository() {}
@@ -53,6 +57,10 @@ public class Repository {
 
   public String getName() {
     return name;
+  }
+
+  public String getFull_name() {
+    return full_name;
   }
 
   public String getUrl() {
