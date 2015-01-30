@@ -18,6 +18,7 @@
 package org.whispersystems.bithub;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.dropwizard.db.DataSourceFactory;
 import org.whispersystems.bithub.config.BithubConfiguration;
 import org.whispersystems.bithub.config.CoinbaseConfiguration;
 import org.whispersystems.bithub.config.GithubConfiguration;
@@ -49,6 +50,14 @@ public class BithubServerConfiguration extends Configuration {
   @JsonProperty
   private OrganizationConfiguration organization;
 
+  @Valid
+  @NotNull
+  @JsonProperty
+  private DataSourceFactory database = new DataSourceFactory();
+
+  public DataSourceFactory getDataSourceFactory() {
+    return database;
+  }
 
   public GithubConfiguration getGithubConfiguration() {
     return github;

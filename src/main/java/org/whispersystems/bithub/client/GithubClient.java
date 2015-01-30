@@ -30,6 +30,7 @@ import com.sun.jersey.core.util.Base64;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.whispersystems.bithub.BithubDAO;
 import org.whispersystems.bithub.entities.Commit;
 import org.whispersystems.bithub.entities.CommitComment;
 import org.whispersystems.bithub.entities.Issue;
@@ -87,7 +88,7 @@ public class GithubClient {
   private final String authorizationHeader;
   private final Client client;
 
-  public GithubClient(String user, String token) {
+  public GithubClient(String user, String token, BithubDAO dao) {
     this.authorizationHeader = getAuthorizationHeader(user, token);
     this.client = Client.create(getClientConfig());
   }

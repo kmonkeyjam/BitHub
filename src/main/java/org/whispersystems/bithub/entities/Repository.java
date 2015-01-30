@@ -25,10 +25,13 @@ import javax.validation.constraints.NotNull;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class Repository {
-
   @JsonProperty
   @NotEmpty
   private String url;
+
+  @JsonProperty
+  @NotEmpty
+  private String html_url;
 
   @JsonProperty
   @NotNull
@@ -65,6 +68,10 @@ public class Repository {
 
   public String getUrl() {
     return url;
+  }
+
+  public String getHtml_url() {
+    return html_url;
   }
 
   public String getDescription() {
