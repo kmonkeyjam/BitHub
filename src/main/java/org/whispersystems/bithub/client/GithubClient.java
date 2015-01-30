@@ -30,7 +30,6 @@ import com.sun.jersey.core.util.Base64;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.whispersystems.bithub.BithubDAO;
 import org.whispersystems.bithub.entities.Commit;
 import org.whispersystems.bithub.entities.CommitComment;
 import org.whispersystems.bithub.entities.Issue;
