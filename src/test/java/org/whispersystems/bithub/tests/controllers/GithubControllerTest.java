@@ -70,10 +70,10 @@ public class GithubControllerTest {
 
   @Rule
   public final ResourceTestRule resources = ResourceTestRule.builder()
-                                                            .addProvider(new UnauthorizedHookExceptionMapper())
-                                                            .addProvider(new BasicAuthProvider<>(new GithubWebhookAuthenticator(authUsername, authPassword), authRealm))
-                                                            .addResource(new GithubController(repositories, githubClient, coinbaseClient, new BigDecimal(0.02)))
-                                                            .build();
+          .addProvider(new UnauthorizedHookExceptionMapper())
+          .addProvider(new BasicAuthProvider<>(new GithubWebhookAuthenticator(authUsername, authPassword), authRealm))
+          .addResource(new GithubController(repositories, githubClient, coinbaseClient, new BigDecimal(0.02), null))
+          .build();
 
 
   @Before
@@ -253,6 +253,5 @@ public class GithubControllerTest {
                                                 any(BigDecimal.class),
                                                 anyString());
   }
-
 
 }

@@ -2,6 +2,7 @@ package org.whispersystems.bithub.views;
 
 import io.dropwizard.views.View;
 import org.whispersystems.bithub.entities.Issue;
+import org.whispersystems.bithub.entities.IssueWrapper;
 import org.whispersystems.bithub.entities.Repository;
 
 import java.util.List;
@@ -14,18 +15,18 @@ import java.util.stream.Collectors;
 public class BountiesView extends View {
   public static class RepositoryView {
     public Repository repository;
-    public List<Issue> issues;
+    public List<IssueWrapper> issues;
 
-    public RepositoryView(Repository repository, List<Issue> issues) {
+    public RepositoryView(Repository repository, List<IssueWrapper> issues) {
       this.repository = repository;
       this.issues = issues;
     }
   }
 
   private List<Repository> repositories;
-  private Map<String, List<Issue>> issues;
+  private Map<String, List<IssueWrapper>> issues;
 
-  public BountiesView(List<Repository> repositories, Map<String, List<Issue>> issues) {
+  public BountiesView(List<Repository> repositories, Map<String, List<IssueWrapper>> issues) {
     super("bounties.mustache");
     this.repositories = repositories;
     this.issues = issues;
@@ -35,7 +36,7 @@ public class BountiesView extends View {
     return repositories.stream().map(r -> new RepositoryView(r, issues.get(r.getUrl()))).collect(Collectors.toList());
   }
 
-  public Map<String, List<Issue>> getIssues() {
-    return issues;
+  public List<IssueWrapper> getIssues() {
+    return issues.values().stream().flatMap(f -> f.stream()).collect(Collectors.toList());
   }
 }

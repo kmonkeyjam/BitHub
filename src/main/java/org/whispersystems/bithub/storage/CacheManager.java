@@ -1,5 +1,7 @@
 package org.whispersystems.bithub.storage;
 
+import com.coinbase.api.entity.Account;
+import com.coinbase.api.exception.CoinbaseException;
 import io.dropwizard.lifecycle.Managed;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +10,7 @@ import org.whispersystems.bithub.client.GithubClient;
 import org.whispersystems.bithub.client.TransferFailedException;
 import org.whispersystems.bithub.config.RepositoryConfiguration;
 import org.whispersystems.bithub.entities.Issue;
+import org.whispersystems.bithub.entities.IssueWrapper;
 import org.whispersystems.bithub.entities.Payment;
 import org.whispersystems.bithub.entities.Repository;
 import org.whispersystems.bithub.entities.Transaction;
@@ -25,6 +28,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 public class CacheManager implements Managed {
 
@@ -41,7 +45,7 @@ public class CacheManager implements Managed {
   private AtomicReference<CurrentPayment>    cachedPaymentStatus;
   private AtomicReference<List<Transaction>> cachedTransactions;
   private AtomicReference<List<Repository>>  cachedRepositories;
-  private AtomicReference<Map<String, List<Issue>>> cachedIssues;
+  private AtomicReference<Map<String, List<IssueWrapper>>> cachedIssues;
 
   public CacheManager(CoinbaseClient coinbaseClient,
                       GithubClient githubClient,
@@ -61,7 +65,7 @@ public class CacheManager implements Managed {
       this.cachedTransactions  = new AtomicReference<>(createRecentTransactions(coinbaseClient));
       List<Repository> currentRepositories = createRepositories(githubClient, repositories);
       this.cachedRepositories  = new AtomicReference<>(currentRepositories);
-      this.cachedIssues = new AtomicReference<>(createIssues(githubClient, currentRepositories));
+      this.cachedIssues = new AtomicReference<>(createIssues(githubClient, coinbaseClient, currentRepositories));
     } catch (TransferFailedException e) {
       throw new RuntimeException("Failed to initialize the CacheManager");
     }
@@ -86,7 +90,7 @@ public class CacheManager implements Managed {
     return cachedRepositories.get();
   }
 
-  public Map<String, List<Issue>> getIssues() {
+  public Map<String, List<IssueWrapper>> getIssues() {
     return cachedIssues.get();
   }
 
@@ -94,22 +98,19 @@ public class CacheManager implements Managed {
                                 final GithubClient githubClient,
                                 final List<RepositoryConfiguration> repoConfigs)
   {
-    executor.scheduleAtFixedRate(new Runnable() {
-      @Override
-      public void run() {
-        try {
-          CurrentPayment    currentPayment = createCurrentPaymentForBalance(coinbaseClient);
-          List<Transaction> transactions   = createRecentTransactions      (coinbaseClient);
-          List<Repository>  repositories   = createRepositories(githubClient, repoConfigs);
-          Map<String, List<Issue>> issues  = createIssues(githubClient, repositories);
+    executor.scheduleAtFixedRate(() -> {
+      try {
+        CurrentPayment    currentPayment = createCurrentPaymentForBalance(coinbaseClient);
+        List<Transaction> transactions   = createRecentTransactions(coinbaseClient);
+        List<Repository> repositories1 = createRepositories(githubClient, repoConfigs);
+        Map<String, List<IssueWrapper>> issues  = createIssues(githubClient, coinbaseClient, repositories1);
 
-          cachedPaymentStatus.set(currentPayment);
-          cachedTransactions.set(transactions);
-          cachedRepositories.set(repositories);
-          cachedIssues.set(issues);
-        } catch (IOException | TransferFailedException e) {
-          logger.warn("Failed to update badge", e);
-        }
+        cachedPaymentStatus.set(currentPayment);
+        cachedTransactions.set(transactions);
+        cachedRepositories.set(repositories1);
+        cachedIssues.set(issues);
+      } catch (IOException | TransferFailedException e) {
+        logger.warn("Failed to update badge", e);
       }
     }, UPDATE_FREQUENCY_MILLIS, UPDATE_FREQUENCY_MILLIS, TimeUnit.MILLISECONDS);
   }
@@ -126,15 +127,35 @@ public class CacheManager implements Managed {
     return repositoryList;
   }
 
-  private Map<String, List<Issue>> createIssues(GithubClient githubClient,
-                                                List<Repository> repos) {
-    Map<String, List<Issue>> issues = new HashMap<>();
+  private Map<String, List<IssueWrapper>> createIssues(GithubClient githubClient,
+                                                       CoinbaseClient coinbaseClient,
+                                                       List<Repository> repos)
+          throws IOException, TransferFailedException {
+    List<Account> accounts = coinbaseClient.getAccounts();
+    Map<String, Account> currentWallets = accounts.stream().collect(Collectors.toMap(Account::getName, a -> a));
+    BigDecimal exchangeRate = coinbaseClient.getExchangeRate();
+    CurrentPayment perCommitPayment = cachedPaymentStatus.get();
 
+    Map<String, List<IssueWrapper>> issues = new HashMap<>();
     for (Repository repository : repos) {
       String url = repository.getUrl();
-      issues.put(url, githubClient.getOpenIssues(repository.getFull_name()));
+      List<Issue> openIssues = githubClient.getOpenIssues(repository.getFull_name());
+      List<IssueWrapper> wrappers = openIssues.stream().map(issue -> {
+        String issueId = issue.getId();
+        try {
+          Account wallet = currentWallets.get(issueId);
+          if (wallet == null) {
+            wallet = coinbaseClient.createWallet(issueId);
+          }
+          return new IssueWrapper(issue, coinbaseClient.createButton(wallet.getId()),
+                  wallet, getCurrentPayment(wallet.getBalance().getAmount(), exchangeRate), perCommitPayment);
+        } catch (CoinbaseException | IOException e) {
+          e.printStackTrace();
+        }
+        return null;
+      }).filter(i -> i != null).collect(Collectors.toList());
+      issues.put(url, wrappers);
     }
-
     return issues;
   }
 
@@ -143,6 +164,10 @@ public class CacheManager implements Managed {
     BigDecimal currentBalance = coinbaseClient.getAccountBalance();
     BigDecimal paymentBtc     = currentBalance.multiply(payoutRate);
     BigDecimal exchangeRate   = coinbaseClient.getExchangeRate();
+    return getCurrentPayment(paymentBtc, exchangeRate);
+  }
+
+  private CurrentPayment getCurrentPayment(BigDecimal paymentBtc, BigDecimal exchangeRate) throws IOException {
     BigDecimal paymentUsd     = paymentBtc.multiply(exchangeRate);
 
     paymentUsd = paymentUsd.setScale(2, RoundingMode.CEILING);

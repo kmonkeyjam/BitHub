@@ -19,6 +19,7 @@ package org.whispersystems.bithub.controllers;
 
 import com.codahale.metrics.annotation.Timed;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.dropwizard.auth.Auth;
 import org.apache.commons.net.util.SubnetUtils;
 import org.apache.commons.net.util.SubnetUtils.SubnetInfo;
 import org.slf4j.Logger;
@@ -31,6 +32,7 @@ import org.whispersystems.bithub.config.RepositoryConfiguration;
 import org.whispersystems.bithub.entities.Commit;
 import org.whispersystems.bithub.entities.PushEvent;
 import org.whispersystems.bithub.entities.Repository;
+import org.whispersystems.bithub.storage.CacheManager;
 
 import javax.validation.Validation;
 import javax.validation.Validator;
@@ -50,8 +52,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
-import io.dropwizard.auth.Auth;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Handles incoming API calls from GitHub.  These are currently only
@@ -70,16 +72,18 @@ public class GithubController {
 
   private final CoinbaseClient      coinbaseClient;
   private final GithubClient        githubClient;
+  private CacheManager cacheManager;
   private final Map<String, String> repositories;
   private final BigDecimal          payoutRate;
 
   public GithubController(List<RepositoryConfiguration> repositories,
                           GithubClient githubClient,
                           CoinbaseClient coinbaseClient,
-                          BigDecimal payoutRate)
+                          BigDecimal payoutRate, CacheManager cacheManager)
   {
     this.coinbaseClient = coinbaseClient;
     this.githubClient   = githubClient;
+    this.cacheManager = cacheManager;
     this.repositories   = new HashMap<>();
     this.payoutRate     = payoutRate;
 
@@ -125,10 +129,10 @@ public class GithubController {
   private void sendPaymentsFor(Repository repository, List<Commit> commits,
                                BigDecimal balance, BigDecimal exchangeRate)
   {
+    BigDecimal payout = balance.multiply(payoutRate);
     for (Commit commit : commits) {
       try {
-        BigDecimal payout = balance.multiply(payoutRate);
-
+        // commit.getMessage().contains("Fixes #")
         if (isViablePaymentAmount(payout)) {
           coinbaseClient.sendPayment(commit.getAuthor(), payout, commit.getUrl());
         }
@@ -140,6 +144,15 @@ public class GithubController {
       } catch (TransferFailedException e) {
         logger.warn("Transfer failed", e);
       }
+    }
+  }
+
+  private void getBountyPayout(Commit commit) {
+    Pattern p = Pattern.compile(".*Fixes #([0-9]*).*", Pattern.MULTILINE | Pattern.DOTALL);
+    Matcher m = p.matcher(commit.getMessage());
+    while (m.find()) {
+      String issueID = m.group(1);
+      System.out.println(issueID);
     }
   }
 

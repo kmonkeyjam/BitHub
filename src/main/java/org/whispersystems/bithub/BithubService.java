@@ -81,7 +81,7 @@ public class BithubService extends Application<BithubServerConfiguration> {
     DBI jdbi = factory.build(environment, config.getDataSourceFactory(), "postgresql");
     BithubDAO dao = jdbi.onDemand(BithubDAO.class);
 
-    GithubClient   githubClient   = new GithubClient(githubUser, githubToken, dao);
+    GithubClient   githubClient   = new GithubClient(githubUser, githubToken);
     CoinbaseConfiguration coinbaseConfig = config.getCoinbaseConfiguration();
     CoinbaseClient coinbaseClient = new CoinbaseClient(coinbaseConfig.getApiKey(), coinbaseConfig.getApiSecret());
     CacheManager   cacheManager   = new CacheManager(coinbaseClient, githubClient, githubRepositories, payoutRate);
@@ -91,10 +91,10 @@ public class BithubService extends Application<BithubServerConfiguration> {
 
     environment.lifecycle().manage(cacheManager);
 
-    environment.jersey().register(new GithubController(githubRepositories, githubClient, coinbaseClient, payoutRate));
+    environment.jersey().register(new GithubController(githubRepositories, githubClient, coinbaseClient, payoutRate, cacheManager));
     environment.jersey().register(new StatusController(cacheManager, githubRepositories));
     environment.jersey().register(new DashboardController(organizationName, donationUrl, cacheManager));
-    environment.jersey().register(new BountiesController(cacheManager));
+    environment.jersey().register(new BountiesController(cacheManager, coinbaseClient));
 
     environment.jersey().register(new IOExceptionMapper());
     environment.jersey().register(new UnauthorizedHookExceptionMapper());

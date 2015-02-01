@@ -20,27 +20,18 @@ package org.whispersystems.bithub.client;
 import com.coinbase.api.Coinbase;
 import com.coinbase.api.CoinbaseBuilder;
 import com.coinbase.api.entity.Account;
+import com.coinbase.api.entity.AccountsResponse;
+import com.coinbase.api.entity.Button;
 import com.coinbase.api.entity.Transaction;
 import com.coinbase.api.exception.CoinbaseException;
-import com.sun.jersey.api.client.Client;
 import com.sun.jersey.api.client.ClientHandlerException;
 import com.sun.jersey.api.client.UniformInterfaceException;
-import com.sun.jersey.api.client.WebResource;
-import com.sun.jersey.api.client.config.ClientConfig;
-import com.sun.jersey.api.client.config.DefaultClientConfig;
-import com.sun.jersey.api.json.JSONConfiguration;
-import org.apache.commons.codec.binary.Hex;
-import org.codehaus.jackson.map.ObjectMapper;
 import org.joda.money.Money;
 import org.whispersystems.bithub.entities.Author;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-import javax.ws.rs.core.MediaType;
 import java.io.IOException;
 import java.math.BigDecimal;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -49,23 +40,14 @@ import java.util.List;
  * @author Moxie Marlinspike
  */
 public class CoinbaseClient {
-  private static final String COINBASE_URL             = "https://coinbase.com";
-  private static final String BALANCE_PATH             = "/api/v1/account/balance";
-  private static final String PAYMENT_PATH             = "/api/v1/transactions/send_money";
-  private static final String RECENT_TRANSACTIONS_PATH = "/api/v1/transactions";
-
-  private final String apiKey;
-  private final String apiSecret;
-  private final Client client;
   private final Coinbase coinbase;
   private final String primaryAccountId;
-
-  private static final ObjectMapper objectMapper = new ObjectMapper();
+  private String apiKey;
+  private String apiSecret;
 
   public CoinbaseClient(String apiKey, String apiSecret) {
     this.apiKey = apiKey;
     this.apiSecret = apiSecret;
-    this.client = Client.create(getClientConfig());
     coinbase = new CoinbaseBuilder().withApiKey(apiKey, apiSecret).build();
     try {
       Account accounts = coinbase.getAccounts().getAccounts().stream().filter(Account::isPrimary).findFirst().get();
@@ -119,31 +101,44 @@ public class CoinbaseClient {
     }
   }
 
-  private WebResource.Builder getAuthenticatedWebResource(String path, Object body) throws TransferFailedException {
+  public Account createWallet(String name) throws CoinbaseException, IOException {
+    Account account = new Account();
+    account.setName(name);
+    return coinbase.createAccount(account);
+  }
+
+  public List<Account> getAccounts() {
+    List<Account> allAccounts = new ArrayList<>();
     try {
-      String json = body == null ? "" : objectMapper.writeValueAsString(body);
-      String nonce = String.valueOf(System.currentTimeMillis());
-      String message = nonce + COINBASE_URL + path + json;
-      Mac mac = Mac.getInstance("HmacSHA256");
-      mac.init(new SecretKeySpec(apiSecret.getBytes(), "HmacSHA256"));
-
-      String signature = new String(Hex.encodeHex(mac.doFinal(message.getBytes())));
-      return client.resource(COINBASE_URL)
-              .path(path)
-              .accept(MediaType.APPLICATION_JSON)
-              .header("ACCESS_SIGNATURE", signature)
-              .header("ACCESS_NONCE", nonce)
-              .header("ACCESS_KEY", apiKey);
-    } catch (NoSuchAlgorithmException | InvalidKeyException | IOException e) {
-      throw new TransferFailedException();
+      AccountsResponse accounts = coinbase.getAccounts();
+      allAccounts.addAll(accounts.getAccounts());
+      int numPages = accounts.getNumPages();
+      while (accounts.getCurrentPage() < numPages) {
+        accounts = coinbase.getAccounts(accounts.getCurrentPage() + 1);
+        allAccounts.addAll(accounts.getAccounts());
+      }
+    } catch (IOException | CoinbaseException e) {
+      e.printStackTrace();
     }
+    return allAccounts;
   }
 
-  private ClientConfig getClientConfig() {
-    ClientConfig config = new DefaultClientConfig();
-    config.getFeatures().put(JSONConfiguration.FEATURE_POJO_MAPPING, Boolean.TRUE);
+  public String createButton(String accountId) {
+    Button button = new Button();
+    button.setName("Donate now");
+    button.setPrice(Money.parse("USD 20.0"));
+    button.setType(Button.Type.DONATION);
+    button.setStyle(Button.Style.DONATION_LARGE);
+    button.setText("Donate");
 
-    return config;
+    Coinbase accountClient = new CoinbaseBuilder().withApiKey(apiKey, apiSecret).withAccountId(accountId).build();
+
+    // try {
+      // return coinbase.createButton(button).getCode();
+      // XXX
+      return "17278c0e3e28344cf313e43d03df4b71";
+    // } catch (CoinbaseException | IOException e) {
+    //   return null;
+    // }
   }
-
 }

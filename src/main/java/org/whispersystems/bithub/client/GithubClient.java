@@ -27,7 +27,6 @@ import com.sun.jersey.api.client.config.ClientConfig;
 import com.sun.jersey.api.client.config.DefaultClientConfig;
 import com.sun.jersey.api.json.JSONConfiguration;
 import com.sun.jersey.core.util.Base64;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.whispersystems.bithub.BithubDAO;
@@ -88,7 +87,7 @@ public class GithubClient {
   private final String authorizationHeader;
   private final Client client;
 
-  public GithubClient(String user, String token, BithubDAO dao) {
+  public GithubClient(String user, String token) {
     this.authorizationHeader = getAuthorizationHeader(user, token);
     this.client = Client.create(getClientConfig());
   }
